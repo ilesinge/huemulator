@@ -162,7 +162,7 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	light.colorRect.Resize(fyne.NewSize(280, 300))
 
 	// Create on/off button
-	light.onOffButton = widget.NewButton("OFF", func() {
+	/*light.onOffButton = widget.NewButton("OFF", func() {
 		light.toggleLight()
 	})
 
@@ -196,12 +196,12 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 		hueSlider,
 		widget.NewLabel("Saturation:"),
 		satSlider,
-	)
+	)*/
 
 	// Main container
 	content := container.NewBorder(
 		nil,
-		controls,
+		nil, //controls,
 		nil,
 		nil,
 		light.colorRect,
@@ -258,7 +258,7 @@ func (l *HueLight) updateGUI() {
 	defer l.mutex.RUnlock()
 
 	if l.State.On {
-		l.onOffButton.SetText("ON")
+		//l.onOffButton.SetText("ON")
 
 		// Convert HSV to RGB for display
 		var r, g, b uint8
@@ -274,7 +274,7 @@ func (l *HueLight) updateGUI() {
 
 		l.colorRect.FillColor = color.RGBA{R: r, G: g, B: b, A: 255}
 	} else {
-		l.onOffButton.SetText("OFF")
+		//l.onOffButton.SetText("OFF")
 		l.colorRect.FillColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
 	}
 
