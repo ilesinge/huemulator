@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+	"github.com/google/uuid"
 )
 
 // HueLight represents a single fake Hue light
@@ -128,7 +129,7 @@ func NewHueBridge(port int) *HueBridge {
 func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	lightID := strconv.Itoa(id)
 	light := &HueLight{
-		ID:           lightID,
+		ID:           uuid.New().String(), // Generate a unique ID for the light
 		Name:         fmt.Sprintf("Fake Hue Light %d", id),
 		Type:         "Extended color light",
 		ModelID:      "LCT016",
@@ -374,7 +375,7 @@ func main() {
 
 	// Create lights with GUI windows
 	for i := 1; i <= *numLights; i++ {
-		light := bridge.CreateLight(i+10, fyneApp)
+		light := bridge.CreateLight(i, fyneApp)
 		light.window.Show()
 	}
 
@@ -491,6 +492,15 @@ func handleUpdateV2LightState(w http.ResponseWriter, r *http.Request, lightID st
 	// Find the light
 	bridge.mutex.RLock()
 	light, exists := bridge.lights[lightID]
+	if !exists {
+		for _, l := range bridge.lights {
+			if l.ID == lightID {
+				light = l
+				exists = true
+				break
+			}
+		}
+	}
 	bridge.mutex.RUnlock()
 
 	if !exists {
