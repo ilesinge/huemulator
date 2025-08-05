@@ -6,7 +6,8 @@ A software-only implementation of a Philips Hue Bridge that creates fake lights 
 
 - **Multiple Light Support**: Create any number of fake lights (default: 3)
 - **Individual GUI Windows**: Each light has its own window showing current color/state
-- **Full Hue API Compatibility**: Compatible with diyhue, Home Assistant, and other Hue integrations
+- **Full Hue API Compatibility**: Compatible with both v1 and v2 (CLIP) APIs
+- **diyhue Compatible**: Works with diyhue, Home Assistant, and other Hue integrations
 - **SSDP Discovery**: Automatic discovery by Hue-compatible systems
 - **Interactive Controls**: Click buttons and use sliders in each light window
 - **Cross-Platform**: Works on Linux, Windows, and macOS
@@ -35,16 +36,16 @@ go build -o fakehuebridge
 ```bash
 ./fakehuebridge
 ```
-This starts 3 fake lights on port 8080.
+This starts 3 fake lights on port 8043.
 
 ### Custom Configuration
 ```bash
-./fakehuebridge -lights 5 -port 8080
+./fakehuebridge -lights 5 -port 8043
 ```
 
 ### Command Line Options
 - `-lights N`: Number of fake lights to create (default: 3)
-- `-port PORT`: Port for the Hue API server (default: 8080)
+- `-port PORT`: Port for the Hue API server (default: 8043)
 
 ## GUI Windows
 
@@ -57,30 +58,56 @@ Each light opens in its own window containing:
 
 ## API Endpoints
 
-The bridge implements standard Philips Hue API endpoints:
+The bridge implements both Philips Hue API v1 and v2 (CLIP API) endpoints:
 
-### Get All Lights
+### V1 API (Legacy)
+
+#### Get All Lights
 ```bash
-curl "http://localhost:8080/api/testuser/lights"
+curl -k "https://localhost:8043/api/testuser/lights"
 ```
 
-### Update Light State
+#### Update Light State
 ```bash
-curl -X PUT -H "Content-Type: application/json" \
+curl -k -X PUT -H "Content-Type: application/json" \
      -d '{"on":true,"hue":25500,"sat":254,"bri":200}' \
-     "http://localhost:8080/api/testuser/lights/1/state"
+     "https://localhost:8043/api/testuser/lights/1/state"
+```
+
+### V2 API (CLIP API)
+
+#### Get All Lights
+```bash
+curl -k "https://localhost:8043/clip/v2/resource/light"
+```
+
+#### Update Light State  
+```bash
+curl -k -X PUT -H "Content-Type: application/json" \
+     -d '{"on":{"on":true},"dimming":{"brightness":75},"color":{"xy":{"x":0.4,"y":0.5}}}' \
+     "https://localhost:8043/clip/v2/resource/light/1"
 ```
 
 ### UPnP Description
 ```bash
-curl "http://localhost:8080/description.xml"
+curl -k "https://localhost:8043/description.xml"
+```
+
+## SSL/TLS Support
+
+The bridge runs with HTTPS using self-signed certificates (`server.crt` and `server.key`). When testing with curl, use the `-k` flag to ignore certificate warnings:
+
+```bash
+# Generate new certificates if needed
+openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
 ```
 
 ## Integration with diyhue
 
 1. Start the fake bridge:
    ```bash
-   ./fakehuebridge -lights 10 -port 8080
+   ./fakehuebridge -lights 10 -port 8043
    ```
 
 2. In diyhue configuration, add the bridge IP and port
@@ -109,23 +136,23 @@ The bridge implements SSDP (Simple Service Discovery Protocol) for automatic dis
 
 Turn light red:
 ```bash
-curl -X PUT -H "Content-Type: application/json" \
+curl -k -X PUT -H "Content-Type: application/json" \
      -d '{"on":true,"hue":0,"sat":254,"bri":254}' \
-     "http://localhost:8080/api/testuser/lights/1/state"
+     "https://localhost:8043/api/testuser/lights/1/state"
 ```
 
 Turn light green:
 ```bash
-curl -X PUT -H "Content-Type: application/json" \
+curl -k -X PUT -H "Content-Type: application/json" \
      -d '{"on":true,"hue":25500,"sat":254,"bri":254}' \
-     "http://localhost:8080/api/testuser/lights/1/state"
+     "https://localhost:8043/api/testuser/lights/1/state"
 ```
 
 Turn light blue:
 ```bash
-curl -X PUT -H "Content-Type: application/json" \
+curl -k -X PUT -H "Content-Type: application/json" \
      -d '{"on":true,"hue":46920,"sat":254,"bri":254}' \
-     "http://localhost:8080/api/testuser/lights/1/state"
+     "https://localhost:8043/api/testuser/lights/1/state"
 ```
 
 ## Development

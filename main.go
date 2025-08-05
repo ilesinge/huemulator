@@ -22,14 +22,14 @@ import (
 
 // HueLight represents a single fake Hue light
 type HueLight struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
+	ID           string      `json:"id"`
+	Name         string      `json:"name"`
 	State        *LightState `json:"state"`
-	Type         string     `json:"type"`
-	ModelID      string     `json:"modelid"`
-	Manufacturer string     `json:"manufacturername"`
-	SWVersion    string     `json:"swversion"`
-	UniqueID     string     `json:"uniqueid"`
+	Type         string      `json:"type"`
+	ModelID      string      `json:"modelid"`
+	Manufacturer string      `json:"manufacturername"`
+	SWVersion    string      `json:"swversion"`
+	UniqueID     string      `json:"uniqueid"`
 	mutex        sync.RWMutex
 	window       fyne.Window
 	colorRect    *canvas.Rectangle
@@ -39,10 +39,10 @@ type HueLight struct {
 // LightState represents the current state of a Hue light
 type LightState struct {
 	On         bool   `json:"on"`
-	Brightness uint8  `json:"bri"`      // 1-254
-	Hue        uint16 `json:"hue"`      // 0-65535
-	Saturation uint8  `json:"sat"`      // 0-254
-	ColorTemp  uint16 `json:"ct"`       // 153-500 (mireds)
+	Brightness uint8  `json:"bri"`       // 1-254
+	Hue        uint16 `json:"hue"`       // 0-65535
+	Saturation uint8  `json:"sat"`       // 0-254
+	ColorTemp  uint16 `json:"ct"`        // 153-500 (mireds)
 	ColorMode  string `json:"colormode"` // "hs", "ct", "xy"
 	Alert      string `json:"alert"`
 	Effect     string `json:"effect"`
@@ -56,6 +56,57 @@ type StateUpdate struct {
 	Hue        *uint16 `json:"hue,omitempty"`
 	Saturation *uint8  `json:"sat,omitempty"`
 	ColorTemp  *uint16 `json:"ct,omitempty"`
+}
+
+// V2 API structures for CLIP API
+type V2Light struct {
+	ID       string     `json:"id"`
+	IDV1     string     `json:"id_v1"`
+	Metadata V2Metadata `json:"metadata"`
+	On       V2OnState  `json:"on"`
+	Dimming  V2Dimming  `json:"dimming"`
+	Color    V2Color    `json:"color,omitempty"`
+	Type     string     `json:"type"`
+}
+
+type V2Metadata struct {
+	Name      string `json:"name"`
+	Archetype string `json:"archetype"`
+}
+
+type V2OnState struct {
+	On bool `json:"on"`
+}
+
+type V2Dimming struct {
+	Brightness float64 `json:"brightness"`
+}
+
+type V2Color struct {
+	XY        V2XY    `json:"xy,omitempty"`
+	ColorTemp V2CT    `json:"color_temperature,omitempty"`
+	Gamut     V2Gamut `json:"gamut,omitempty"`
+	GamutType string  `json:"gamut_type,omitempty"`
+}
+
+type V2XY struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type V2CT struct {
+	Mirek int `json:"mirek"`
+}
+
+type V2Gamut struct {
+	Red   V2XY `json:"red"`
+	Green V2XY `json:"green"`
+	Blue  V2XY `json:"blue"`
+}
+
+type V2Response struct {
+	Errors []interface{} `json:"errors"`
+	Data   []V2Light     `json:"data"`
 }
 
 // HueBridge represents the fake Hue Bridge
@@ -100,7 +151,7 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	// Create GUI window for this light
 	light.window = fyneApp.NewWindow(fmt.Sprintf("Hue Light %d", id))
 	light.window.Resize(fyne.NewSize(300, 400))
-	
+
 	// Position windows in a grid (note: Move() is not available in all Fyne versions)
 	// x := float32((id-1) % 3 * 320)
 	// y := float32((id-1) / 3 * 420)
@@ -207,7 +258,7 @@ func (l *HueLight) updateGUI() {
 
 	if l.State.On {
 		l.onOffButton.SetText("ON")
-		
+
 		// Convert HSV to RGB for display
 		var r, g, b uint8
 		if l.State.ColorMode == "hs" {
@@ -219,13 +270,13 @@ func (l *HueLight) updateGUI() {
 			g = uint8(220 * intensity)
 			b = uint8(180 * intensity)
 		}
-		
+
 		l.colorRect.FillColor = color.RGBA{R: r, G: g, B: b, A: 255}
 	} else {
 		l.onOffButton.SetText("OFF")
 		l.colorRect.FillColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
 	}
-	
+
 	l.colorRect.Refresh()
 }
 
@@ -233,7 +284,7 @@ func (l *HueLight) updateGUI() {
 func (l *HueLight) updateLightState(update StateUpdate) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	
+
 	if update.On != nil {
 		l.State.On = *update.On
 	}
@@ -252,7 +303,7 @@ func (l *HueLight) updateLightState(update StateUpdate) {
 		l.State.ColorTemp = *update.ColorTemp
 		l.State.ColorMode = "ct"
 	}
-	
+
 	// Update GUI in the main thread
 	go func() {
 		time.Sleep(10 * time.Millisecond) // Small delay to ensure thread safety
@@ -267,7 +318,7 @@ func hsvToRGB(hue uint16, sat, val uint8) (r, g, b uint8) {
 	v := float64(val) / 254.0
 
 	c := v * s
-	x := c * (1 - abs(mod(h/60.0, 2) - 1))
+	x := c * (1 - abs(mod(h/60.0, 2)-1))
 	m := v - c
 
 	var r1, g1, b1 float64
@@ -304,7 +355,7 @@ func mod(x, y float64) float64 {
 
 func main() {
 	var numLights = flag.Int("lights", 3, "Number of fake lights to create")
-	var port = flag.Int("port", 8080, "Port for the Hue API server")
+	var port = flag.Int("port", 8043, "Port for the Hue API server")
 	flag.Parse()
 
 	fmt.Printf("Starting fake Hue Bridge with %d lights\n", *numLights)
@@ -323,7 +374,7 @@ func main() {
 
 	// Create lights with GUI windows
 	for i := 1; i <= *numLights; i++ {
-		light := bridge.CreateLight(i, fyneApp)
+		light := bridge.CreateLight(i+10, fyneApp)
 		light.window.Show()
 	}
 
@@ -340,12 +391,17 @@ func main() {
 func startHueAPIServer(port int, bridge *HueBridge) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received API request: %s %s", r.Method, r.URL.Path)
 		handleHueAPI(w, r, bridge)
+	})
+	mux.HandleFunc("/clip/v2/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Received CLIP v2 API request: %s %s", r.Method, r.URL.Path)
+		handleHueV2API(w, r, bridge)
 	})
 	mux.HandleFunc("/description.xml", handleDescription)
 
-	log.Printf("Hue API server starting on port %d", port)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
+	log.Printf("Hue API server starting on port %d (HTTPS)", port)
+	log.Fatal(http.ListenAndServeTLS(fmt.Sprintf(":%d", port), "server.crt", "server.key", mux))
 }
 
 func handleHueAPI(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
@@ -376,7 +432,220 @@ func handleHueAPI(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func handleGetLights(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
+func handleHueV2API(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
+	path := strings.TrimPrefix(r.URL.Path, "/clip/v2/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 1 {
+		http.Error(w, "Invalid CLIP v2 API path", http.StatusBadRequest)
+		return
+	}
+
+	// Handle /clip/v2/resource/light
+	if len(parts) >= 2 && parts[0] == "resource" && parts[1] == "light" {
+		if r.Method == "GET" {
+			handleGetV2Lights(w, r, bridge)
+		} else if r.Method == "PUT" && len(parts) >= 3 {
+			// Handle PUT /clip/v2/resource/light/{id}
+			handleUpdateV2LightState(w, r, parts[2], bridge)
+		}
+		return
+	}
+
+	// Default response for unknown v2 endpoints
+	response := V2Response{
+		Errors: []interface{}{},
+		Data:   []V2Light{},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleGetV2Lights(w http.ResponseWriter, _ *http.Request, bridge *HueBridge) {
+	bridge.mutex.RLock()
+	defer bridge.mutex.RUnlock()
+
+	var v2Lights []V2Light
+	for _, light := range bridge.lights {
+		v2Light := convertToV2Light(light)
+		v2Lights = append(v2Lights, v2Light)
+	}
+
+	response := V2Response{
+		Errors: []interface{}{},
+		Data:   v2Lights,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func handleUpdateV2LightState(w http.ResponseWriter, r *http.Request, lightID string, bridge *HueBridge) {
+	var update map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Find the light
+	bridge.mutex.RLock()
+	light, exists := bridge.lights[lightID]
+	bridge.mutex.RUnlock()
+
+	if !exists {
+		http.Error(w, "Light not found", http.StatusNotFound)
+		return
+	}
+
+	// Convert v2 format to v1 format for internal processing
+	stateUpdate := convertV2ToV1StateUpdate(update)
+	light.updateLightState(stateUpdate)
+
+	// Return the updated light in v2 format
+	response := V2Response{
+		Errors: []interface{}{},
+		Data:   []V2Light{convertToV2Light(light)},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+
+	log.Printf("V2 Light %s updated via CLIP API", lightID)
+}
+
+func convertToV2Light(light *HueLight) V2Light {
+	light.mutex.RLock()
+	defer light.mutex.RUnlock()
+
+	// Convert hue/sat to XY coordinates (simplified conversion)
+	x, y := hueToXY(light.State.Hue, light.State.Saturation)
+
+	v2Light := V2Light{
+		ID:   light.ID,
+		IDV1: "/lights/" + light.ID,
+		Metadata: V2Metadata{
+			Name:      light.Name,
+			Archetype: "sultan_bulb",
+		},
+		On: V2OnState{
+			On: light.State.On,
+		},
+		Dimming: V2Dimming{
+			Brightness: float64(light.State.Brightness) / 254.0 * 100.0,
+		},
+		Type: "light",
+	}
+
+	// Add color information if the light supports it
+	if light.State.ColorMode == "hs" {
+		v2Light.Color = V2Color{
+			XY: V2XY{X: x, Y: y},
+			Gamut: V2Gamut{
+				Red:   V2XY{X: 0.675, Y: 0.322},
+				Green: V2XY{X: 0.409, Y: 0.518},
+				Blue:  V2XY{X: 0.167, Y: 0.04},
+			},
+			GamutType: "C",
+		}
+	} else if light.State.ColorMode == "ct" {
+		v2Light.Color = V2Color{
+			ColorTemp: V2CT{
+				Mirek: int(light.State.ColorTemp),
+			},
+		}
+	}
+
+	return v2Light
+}
+
+func convertV2ToV1StateUpdate(v2Update map[string]interface{}) StateUpdate {
+	var update StateUpdate
+
+	// Handle on/off
+	if onData, exists := v2Update["on"]; exists {
+		if onMap, ok := onData.(map[string]interface{}); ok {
+			if on, exists := onMap["on"]; exists {
+				if onBool, ok := on.(bool); ok {
+					update.On = &onBool
+				}
+			}
+		}
+	}
+
+	// Handle dimming (brightness)
+	if dimmingData, exists := v2Update["dimming"]; exists {
+		if dimmingMap, ok := dimmingData.(map[string]interface{}); ok {
+			if brightness, exists := dimmingMap["brightness"]; exists {
+				if brightnessFloat, ok := brightness.(float64); ok {
+					// Convert from percentage (0-100) to Hue range (1-254)
+					bri := uint8(brightnessFloat / 100.0 * 254.0)
+					if bri < 1 {
+						bri = 1
+					}
+					update.Brightness = &bri
+				}
+			}
+		}
+	}
+
+	// Handle color
+	if colorData, exists := v2Update["color"]; exists {
+		if colorMap, ok := colorData.(map[string]interface{}); ok {
+			// Handle XY color
+			if xyData, exists := colorMap["xy"]; exists {
+				if xyMap, ok := xyData.(map[string]interface{}); ok {
+					if x, xExists := xyMap["x"]; xExists {
+						if y, yExists := xyMap["y"]; yExists {
+							if xFloat, xOk := x.(float64); xOk {
+								if yFloat, yOk := y.(float64); yOk {
+									// Convert XY to Hue/Sat (simplified)
+									hue, sat := xyToHue(xFloat, yFloat)
+									update.Hue = &hue
+									update.Saturation = &sat
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Handle color temperature
+			if ctData, exists := colorMap["color_temperature"]; exists {
+				if ctMap, ok := ctData.(map[string]interface{}); ok {
+					if mirek, exists := ctMap["mirek"]; exists {
+						if mirekFloat, ok := mirek.(float64); ok {
+							ct := uint16(mirekFloat)
+							update.ColorTemp = &ct
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return update
+}
+
+// Simplified XY to Hue/Sat conversion
+func xyToHue(x, y float64) (uint16, uint8) {
+	// This is a very simplified conversion
+	// In a real implementation, you'd use proper CIE color space conversion
+	hue := uint16((x * 65535.0))
+	sat := uint8((y * 254.0))
+	return hue, sat
+}
+
+// Simplified Hue/Sat to XY conversion
+func hueToXY(hue uint16, sat uint8) (float64, float64) {
+	// This is a very simplified conversion
+	// In a real implementation, you'd use proper CIE color space conversion
+	x := float64(hue) / 65535.0
+	y := float64(sat) / 254.0
+	return x, y
+}
+
+func handleGetLights(w http.ResponseWriter, _ *http.Request, bridge *HueBridge) {
 	bridge.mutex.RLock()
 	defer bridge.mutex.RUnlock()
 
