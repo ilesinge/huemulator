@@ -21,12 +21,6 @@ go.work
 fakehuebridge
 fakehuebridge.exe
 
-# SSL certificates (comment out if you want to track them)
-*.crt
-*.key
-server.crt
-server.key
-
 # IDE files
 .vscode/
 .idea/
