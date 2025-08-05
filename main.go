@@ -17,7 +17,6 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
 	"github.com/google/uuid"
 )
 
@@ -34,7 +33,6 @@ type HueLight struct {
 	mutex        sync.RWMutex
 	window       fyne.Window
 	colorRect    *canvas.Rectangle
-	onOffButton  *widget.Button
 }
 
 // LightState represents the current state of a Hue light
@@ -215,41 +213,6 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	b.mutex.Unlock()
 
 	return light
-}
-
-// toggleLight toggles the light on/off
-func (l *HueLight) toggleLight() {
-	l.mutex.Lock()
-	l.State.On = !l.State.On
-	l.mutex.Unlock()
-	l.updateGUI()
-	log.Printf("Light %s toggled to: %v", l.ID, l.State.On)
-}
-
-// setBrightness sets the light brightness
-func (l *HueLight) setBrightness(brightness uint8) {
-	l.mutex.Lock()
-	l.State.Brightness = brightness
-	l.mutex.Unlock()
-	l.updateGUI()
-}
-
-// setHue sets the light hue
-func (l *HueLight) setHue(hue uint16) {
-	l.mutex.Lock()
-	l.State.Hue = hue
-	l.State.ColorMode = "hs"
-	l.mutex.Unlock()
-	l.updateGUI()
-}
-
-// setSaturation sets the light saturation
-func (l *HueLight) setSaturation(saturation uint8) {
-	l.mutex.Lock()
-	l.State.Saturation = saturation
-	l.State.ColorMode = "hs"
-	l.mutex.Unlock()
-	l.updateGUI()
 }
 
 // updateGUI updates the visual representation of the light
@@ -548,7 +511,8 @@ func convertToV2Light(light *HueLight) V2Light {
 	}
 
 	// Add color information if the light supports it
-	if light.State.ColorMode == "hs" {
+	switch light.State.ColorMode {
+	case "hs":
 		v2Light.Color = V2Color{
 			XY: V2XY{X: x, Y: y},
 			Gamut: V2Gamut{
@@ -558,7 +522,7 @@ func convertToV2Light(light *HueLight) V2Light {
 			},
 			GamutType: "C",
 		}
-	} else if light.State.ColorMode == "ct" {
+	case "ct":
 		v2Light.Color = V2Color{
 			ColorTemp: V2CT{
 				Mirek: int(light.State.ColorTemp),
