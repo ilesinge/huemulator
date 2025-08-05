@@ -4,11 +4,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image/color"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
 )
 
 // HueLight represents a single fake Hue light
@@ -22,6 +31,9 @@ type HueLight struct {
 	SWVersion    string     `json:"swversion"`
 	UniqueID     string     `json:"uniqueid"`
 	mutex        sync.RWMutex
+	window       fyne.Window
+	colorRect    *canvas.Rectangle
+	onOffButton  *widget.Button
 }
 
 // LightState represents the current state of a Hue light
@@ -46,37 +58,26 @@ type StateUpdate struct {
 	ColorTemp  *uint16 `json:"ct,omitempty"`
 }
 
-var lights []*HueLight
-var lightsMutex sync.RWMutex
-var webPort int
-
-func main() {
-	numLights := flag.Int("lights", 1, "Number of fake lights to create")
-	port := flag.Int("port", 8080, "Port to listen on")
-	webPort = *port + 1000
-	
-	flag.Parse()
-
-	fmt.Printf("Starting %d fake Hue lights\n", *numLights)
-	fmt.Printf("Hue API server on port %d\n", *port)
-	fmt.Printf("Web interface at http://localhost:%d\n", webPort)
-
-	// Initialize lights
-	for i := 0; i < *numLights; i++ {
-		light := createLight(i + 1)
-		lights = append(lights, light)
-	}
-
-	// Start web interface server
-	go startWebServer()
-
-	// Start HTTP server for Hue API
-	startHueAPIServer(*port)
+// HueBridge represents the fake Hue Bridge
+type HueBridge struct {
+	lights map[string]*HueLight
+	mutex  sync.RWMutex
+	port   int
 }
 
-func createLight(id int) *HueLight {
+// NewHueBridge creates a new fake Hue Bridge
+func NewHueBridge(port int) *HueBridge {
+	return &HueBridge{
+		lights: make(map[string]*HueLight),
+		port:   port,
+	}
+}
+
+// CreateLight creates a new light and its GUI window
+func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
+	lightID := strconv.Itoa(id)
 	light := &HueLight{
-		ID:           strconv.Itoa(id),
+		ID:           lightID,
 		Name:         fmt.Sprintf("Fake Hue Light %d", id),
 		Type:         "Extended color light",
 		ModelID:      "LCT016",
@@ -95,206 +96,321 @@ func createLight(id int) *HueLight {
 			Reachable:  true,
 		},
 	}
+
+	// Create GUI window for this light
+	light.window = fyneApp.NewWindow(fmt.Sprintf("Hue Light %d", id))
+	light.window.Resize(fyne.NewSize(300, 400))
+	
+	// Position windows in a grid (note: Move() is not available in all Fyne versions)
+	// x := float32((id-1) % 3 * 320)
+	// y := float32((id-1) / 3 * 420)
+
+	// Create color rectangle that fills most of the window
+	light.colorRect = canvas.NewRectangle(color.RGBA{R: 50, G: 50, B: 50, A: 255})
+	light.colorRect.Resize(fyne.NewSize(280, 300))
+
+	// Create on/off button
+	light.onOffButton = widget.NewButton("OFF", func() {
+		light.toggleLight()
+	})
+
+	// Create brightness slider
+	brightnessSlider := widget.NewSlider(1, 254)
+	brightnessSlider.Value = float64(light.State.Brightness)
+	brightnessSlider.OnChanged = func(value float64) {
+		light.setBrightness(uint8(value))
+	}
+
+	// Create hue slider
+	hueSlider := widget.NewSlider(0, 65535)
+	hueSlider.Value = float64(light.State.Hue)
+	hueSlider.OnChanged = func(value float64) {
+		light.setHue(uint16(value))
+	}
+
+	// Create saturation slider
+	satSlider := widget.NewSlider(0, 254)
+	satSlider.Value = float64(light.State.Saturation)
+	satSlider.OnChanged = func(value float64) {
+		light.setSaturation(uint8(value))
+	}
+
+	// Create controls container
+	controls := container.NewVBox(
+		light.onOffButton,
+		widget.NewLabel("Brightness:"),
+		brightnessSlider,
+		widget.NewLabel("Hue:"),
+		hueSlider,
+		widget.NewLabel("Saturation:"),
+		satSlider,
+	)
+
+	// Main container
+	content := container.NewBorder(
+		nil,
+		controls,
+		nil,
+		nil,
+		light.colorRect,
+	)
+
+	light.window.SetContent(content)
+	light.updateGUI()
+
+	b.mutex.Lock()
+	b.lights[lightID] = light
+	b.mutex.Unlock()
+
 	return light
 }
 
-func (light *HueLight) updateState(update StateUpdate) {
-	light.mutex.Lock()
-	defer light.mutex.Unlock()
-	
-	if update.On != nil {
-		light.State.On = *update.On
-	}
-	if update.Brightness != nil {
-		light.State.Brightness = *update.Brightness
-	}
-	if update.Hue != nil {
-		light.State.Hue = *update.Hue
-		light.State.ColorMode = "hs"
-	}
-	if update.Saturation != nil {
-		light.State.Saturation = *update.Saturation
-		light.State.ColorMode = "hs"
-	}
-	if update.ColorTemp != nil {
-		light.State.ColorTemp = *update.ColorTemp
-		light.State.ColorMode = "ct"
-	}
+// toggleLight toggles the light on/off
+func (l *HueLight) toggleLight() {
+	l.mutex.Lock()
+	l.State.On = !l.State.On
+	l.mutex.Unlock()
+	l.updateGUI()
+	log.Printf("Light %s toggled to: %v", l.ID, l.State.On)
 }
 
-func startWebServer() {
-	http.HandleFunc("/", handleWebInterface)
-	http.HandleFunc("/lights.json", handleLightsJSON)
-	
-	log.Printf("Web interface starting on port %d", webPort)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", webPort), nil))
+// setBrightness sets the light brightness
+func (l *HueLight) setBrightness(brightness uint8) {
+	l.mutex.Lock()
+	l.State.Brightness = brightness
+	l.mutex.Unlock()
+	l.updateGUI()
 }
 
-func handleWebInterface(w http.ResponseWriter, r *http.Request) {
-	html := `<!DOCTYPE html>
-<html>
-<head>
-	<title>Fake Hue Lights</title>
-	<style>
-		body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: white; }
-		.lights-container { display: flex; flex-wrap: wrap; gap: 20px; }
-		.light { 
-			width: 200px; 
-			height: 200px; 
-			border-radius: 10px;
-			border: 3px solid #333;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			text-align: center;
-			font-weight: bold;
-			text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
-		}
-		.light-info {
-			background: rgba(0,0,0,0.3);
-			padding: 10px;
-			border-radius: 5px;
-		}
-		h1 { color: #fff; }
-		.status { margin: 10px 0; font-size: 14px; }
-	</style>
-	<script>
-		function updateLights() {
-			fetch('/lights.json')
-				.then(response => response.json())
-				.then(lights => {
-					const container = document.getElementById('lights');
-					container.innerHTML = '';
-					
-					for (const lightId in lights) {
-						const light = lights[lightId];
-						const div = document.createElement('div');
-						div.className = 'light';
-						
-						let bgColor = 'rgb(0,0,0)';
-						if (light.state.on) {
-							const h = light.state.hue / 65535 * 360;
-							const s = light.state.sat / 254 * 100;
-							const v = light.state.bri / 254 * 100;
-							bgColor = 'hsl(' + h + ',' + s + '%,' + v + '%)';
-						}
-						
-						div.style.backgroundColor = bgColor;
-						div.innerHTML = '<div class="light-info"><div>' + light.name + '</div><div>ID: ' + light.id + '</div><div>' + (light.state.on ? 'ON' : 'OFF') + '</div></div>';
-						container.appendChild(div);
-					}
-				});
+// setHue sets the light hue
+func (l *HueLight) setHue(hue uint16) {
+	l.mutex.Lock()
+	l.State.Hue = hue
+	l.State.ColorMode = "hs"
+	l.mutex.Unlock()
+	l.updateGUI()
+}
+
+// setSaturation sets the light saturation
+func (l *HueLight) setSaturation(saturation uint8) {
+	l.mutex.Lock()
+	l.State.Saturation = saturation
+	l.State.ColorMode = "hs"
+	l.mutex.Unlock()
+	l.updateGUI()
+}
+
+// updateGUI updates the visual representation of the light
+func (l *HueLight) updateGUI() {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+
+	if l.State.On {
+		l.onOffButton.SetText("ON")
+		
+		// Convert HSV to RGB for display
+		var r, g, b uint8
+		if l.State.ColorMode == "hs" {
+			r, g, b = hsvToRGB(l.State.Hue, l.State.Saturation, l.State.Brightness)
+		} else {
+			// Color temperature mode - use warm white
+			intensity := float64(l.State.Brightness) / 254.0
+			r = uint8(255 * intensity)
+			g = uint8(220 * intensity)
+			b = uint8(180 * intensity)
 		}
 		
-		setInterval(updateLights, 1000);
-		window.onload = updateLights;
-	</script>
-</head>
-<body>
-	<h1>Fake Hue Lights Monitor</h1>
-	<div class="status">
-		<p>This page shows the current state of your fake Hue lights.</p>
-		<p>Control them using the Hue API or any Hue-compatible app.</p>
-	</div>
-	<div id="lights" class="lights-container">
-	</div>
-</body>
-</html>`
-	
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(html))
-}
-
-func handleLightsJSON(w http.ResponseWriter, r *http.Request) {
-	lightsMutex.RLock()
-	defer lightsMutex.RUnlock()
-	
-	response := make(map[string]*HueLight)
-	for _, light := range lights {
-		response[light.ID] = light
+		l.colorRect.FillColor = color.RGBA{R: r, G: g, B: b, A: 255}
+	} else {
+		l.onOffButton.SetText("OFF")
+		l.colorRect.FillColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
 	}
 	
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	l.colorRect.Refresh()
 }
 
-func startHueAPIServer(port int) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/", handleHueAPI)
-	mux.HandleFunc("/description.xml", handleDescription)
+// updateLightState updates light state from API call
+func (l *HueLight) updateLightState(update StateUpdate) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
 	
+	if update.On != nil {
+		l.State.On = *update.On
+	}
+	if update.Brightness != nil {
+		l.State.Brightness = *update.Brightness
+	}
+	if update.Hue != nil {
+		l.State.Hue = *update.Hue
+		l.State.ColorMode = "hs"
+	}
+	if update.Saturation != nil {
+		l.State.Saturation = *update.Saturation
+		l.State.ColorMode = "hs"
+	}
+	if update.ColorTemp != nil {
+		l.State.ColorTemp = *update.ColorTemp
+		l.State.ColorMode = "ct"
+	}
+	
+	// Update GUI in the main thread
+	go func() {
+		time.Sleep(10 * time.Millisecond) // Small delay to ensure thread safety
+		l.updateGUI()
+	}()
+}
+
+// hsvToRGB converts HSV values to RGB
+func hsvToRGB(hue uint16, sat, val uint8) (r, g, b uint8) {
+	h := float64(hue) / 65535.0 * 360.0
+	s := float64(sat) / 254.0
+	v := float64(val) / 254.0
+
+	c := v * s
+	x := c * (1 - abs(mod(h/60.0, 2) - 1))
+	m := v - c
+
+	var r1, g1, b1 float64
+	if h >= 0 && h < 60 {
+		r1, g1, b1 = c, x, 0
+	} else if h >= 60 && h < 120 {
+		r1, g1, b1 = x, c, 0
+	} else if h >= 120 && h < 180 {
+		r1, g1, b1 = 0, c, x
+	} else if h >= 180 && h < 240 {
+		r1, g1, b1 = 0, x, c
+	} else if h >= 240 && h < 300 {
+		r1, g1, b1 = x, 0, c
+	} else {
+		r1, g1, b1 = c, 0, x
+	}
+
+	r = uint8((r1 + m) * 255)
+	g = uint8((g1 + m) * 255)
+	b = uint8((b1 + m) * 255)
+	return
+}
+
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
+func mod(x, y float64) float64 {
+	return x - y*float64(int(x/y))
+}
+
+func main() {
+	var numLights = flag.Int("lights", 3, "Number of fake lights to create")
+	var port = flag.Int("port", 8080, "Port for the Hue API server")
+	flag.Parse()
+
+	fmt.Printf("Starting fake Hue Bridge with %d lights\n", *numLights)
+	fmt.Printf("Hue API server on port %d\n", *port)
+
+	// Create Fyne app
+	fyneApp := app.New()
+	// Set app metadata (if supported by Fyne version)
+	// fyneApp.SetMetadata(&fyne.AppMetadata{
+	//	ID:   "com.github.fakehuebridge",
+	//	Name: "Fake Hue Bridge",
+	// })
+
+	// Create bridge
+	bridge := NewHueBridge(*port)
+
+	// Create lights with GUI windows
+	for i := 1; i <= *numLights; i++ {
+		light := bridge.CreateLight(i, fyneApp)
+		light.window.Show()
+	}
+
+	// Start HTTP server for Hue API
+	go startHueAPIServer(*port, bridge)
+
+	// Start SSDP discovery service
+	go startDiscoveryService(*port)
+
+	// Run the Fyne app
+	fyneApp.Run()
+}
+
+func startHueAPIServer(port int, bridge *HueBridge) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		handleHueAPI(w, r, bridge)
+	})
+	mux.HandleFunc("/description.xml", handleDescription)
+
 	log.Printf("Hue API server starting on port %d", port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
 }
 
-func handleHueAPI(w http.ResponseWriter, r *http.Request) {
+func handleHueAPI(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
 	parts := strings.Split(path, "/")
-	
+
 	if len(parts) < 1 {
 		http.Error(w, "Invalid API path", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Handle different API endpoints
 	if len(parts) >= 2 && parts[1] == "lights" {
 		if r.Method == "GET" {
-			handleGetLights(w, r)
+			handleGetLights(w, r, bridge)
 		} else if r.Method == "PUT" && len(parts) >= 4 && parts[3] == "state" {
-			handleUpdateLightState(w, r, parts[2])
+			handleUpdateLightState(w, r, parts[2], bridge)
 		}
 		return
 	}
-	
-	// Default response for unknown endpoints
+
+	// Default response for unknown endpoints (bridge pairing)
 	response := []map[string]interface{}{
 		{"success": map[string]string{"username": "fakehueuser"}},
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-func handleGetLights(w http.ResponseWriter, r *http.Request) {
-	lightsMutex.RLock()
-	defer lightsMutex.RUnlock()
-	
+func handleGetLights(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
+	bridge.mutex.RLock()
+	defer bridge.mutex.RUnlock()
+
 	response := make(map[string]*HueLight)
-	for _, light := range lights {
-		response[light.ID] = light
+	for id, light := range bridge.lights {
+		response[id] = light
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-func handleUpdateLightState(w http.ResponseWriter, r *http.Request, lightID string) {
+func handleUpdateLightState(w http.ResponseWriter, r *http.Request, lightID string, bridge *HueBridge) {
 	var update StateUpdate
 	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	
-	lightsMutex.RLock()
-	var targetLight *HueLight
-	for _, light := range lights {
-		if light.ID == lightID {
-			targetLight = light
-			break
-		}
-	}
-	lightsMutex.RUnlock()
-	
-	if targetLight == nil {
+
+	// Find and update the light
+	bridge.mutex.RLock()
+	light, exists := bridge.lights[lightID]
+	bridge.mutex.RUnlock()
+
+	if !exists {
 		http.Error(w, "Light not found", http.StatusNotFound)
 		return
 	}
-	
-	targetLight.updateState(update)
-	
+
+	light.updateLightState(update)
+
 	// Build response
 	var responses []map[string]interface{}
-	
+
 	if update.On != nil {
 		responses = append(responses, map[string]interface{}{
 			"success": map[string]interface{}{fmt.Sprintf("/lights/%s/state/on", lightID): *update.On},
@@ -320,11 +436,11 @@ func handleUpdateLightState(w http.ResponseWriter, r *http.Request, lightID stri
 			"success": map[string]interface{}{fmt.Sprintf("/lights/%s/state/ct", lightID): *update.ColorTemp},
 		})
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(responses)
-	
-	log.Printf("Light %s updated: on=%v, bri=%v, hue=%v, sat=%v", 
+
+	log.Printf("Light %s updated: on=%v, bri=%v, hue=%v, sat=%v",
 		lightID, update.On, update.Brightness, update.Hue, update.Saturation)
 }
 
@@ -348,7 +464,74 @@ func handleDescription(w http.ResponseWriter, r *http.Request) {
     <UDN>uuid:2f402f80-da50-11e1-9b23-001788102201</UDN>
   </device>
 </root>`
-	
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.Write([]byte(description))
+}
+
+func startDiscoveryService(port int) {
+	// SSDP discovery service for Hue bridge auto-discovery
+	addr, err := net.ResolveUDPAddr("udp4", "239.255.255.250:1900")
+	if err != nil {
+		log.Printf("Error resolving SSDP address: %v", err)
+		return
+	}
+
+	conn, err := net.ListenMulticastUDP("udp4", nil, addr)
+	if err != nil {
+		log.Printf("Error listening for SSDP: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	log.Println("SSDP discovery service started")
+
+	for {
+		buffer := make([]byte, 1024)
+		n, clientAddr, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			continue
+		}
+
+		message := string(buffer[:n])
+		if strings.Contains(message, "M-SEARCH") && strings.Contains(message, "upnp:rootdevice") {
+			go handleSSDPRequest(clientAddr, port)
+		}
+	}
+}
+
+func handleSSDPRequest(clientAddr *net.UDPAddr, port int) {
+	// Get local IP address
+	localIP, err := getLocalIP()
+	if err != nil {
+		return
+	}
+
+	response := fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
+		"CACHE-CONTROL: max-age=100\r\n"+
+		"EXT:\r\n"+
+		"LOCATION: http://%s:%d/description.xml\r\n"+
+		"SERVER: Linux/3.14.0 UPnP/1.0 IpBridge/1.65.0\r\n"+
+		"ST: upnp:rootdevice\r\n"+
+		"USN: uuid:2f402f80-da50-11e1-9b23-001788102201::upnp:rootdevice\r\n\r\n",
+		localIP, port)
+
+	conn, err := net.Dial("udp", clientAddr.String())
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	conn.Write([]byte(response))
+}
+
+func getLocalIP() (string, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String(), nil
 }
