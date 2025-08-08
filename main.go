@@ -159,43 +159,6 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	light.colorRect = canvas.NewRectangle(color.RGBA{R: 50, G: 50, B: 50, A: 255})
 	light.colorRect.Resize(fyne.NewSize(280, 300))
 
-	// Create on/off button
-	/*light.onOffButton = widget.NewButton("OFF", func() {
-		light.toggleLight()
-	})
-
-	// Create brightness slider
-	brightnessSlider := widget.NewSlider(1, 254)
-	brightnessSlider.Value = float64(light.State.Brightness)
-	brightnessSlider.OnChanged = func(value float64) {
-		light.setBrightness(uint8(value))
-	}
-
-	// Create hue slider
-	hueSlider := widget.NewSlider(0, 65535)
-	hueSlider.Value = float64(light.State.Hue)
-	hueSlider.OnChanged = func(value float64) {
-		light.setHue(uint16(value))
-	}
-
-	// Create saturation slider
-	satSlider := widget.NewSlider(0, 254)
-	satSlider.Value = float64(light.State.Saturation)
-	satSlider.OnChanged = func(value float64) {
-		light.setSaturation(uint8(value))
-	}
-
-	// Create controls container
-	controls := container.NewVBox(
-		light.onOffButton,
-		widget.NewLabel("Brightness:"),
-		brightnessSlider,
-		widget.NewLabel("Hue:"),
-		hueSlider,
-		widget.NewLabel("Saturation:"),
-		satSlider,
-	)*/
-
 	// Main container
 	content := container.NewBorder(
 		nil,
