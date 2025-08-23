@@ -2,18 +2,24 @@ module fakehuebridge
 
 go 1.21
 
-require fyne.io/fyne/v2 v2.6.0
+require (
+	fyne.io/fyne/v2 v2.6.0
+	github.com/grandcat/zeroconf v1.0.0
+)
 
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect
+	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/fyne-io/oksvg v0.1.0 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20241217141322-fcc2cadd6f08 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/miekg/dns v1.1.27 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/nicksnyder/go-i18n/v2 v2.5.1 // indirect
 	github.com/rymdport/portal v0.4.1 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
 )
 
 require (

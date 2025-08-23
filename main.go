@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"github.com/google/uuid"
+	"github.com/grandcat/zeroconf"
 )
 
 //go:embed server.crt server.key
@@ -332,8 +333,73 @@ func main() {
 	// Start SSDP discovery service
 	go startDiscoveryService(*port)
 
+	// Start mDNS/DNS-SD advertisement for modern Hue discovery (_hue._tcp)
+	go func() {
+		if err := startMDNSService(*port); err != nil {
+			log.Printf("mDNS advertise failed: %v", err)
+		}
+	}()
+
 	// Run the Fyne app
 	fyneApp.Run()
+}
+
+// startMDNSService advertises the bridge using mDNS/DNS-SD on _hue._tcp.local
+// Clients will query this to discover bridges without SSDP.
+func startMDNSService(port int) error {
+	// Build a bridge ID from local MAC if possible (EUI-64 style), else fallback
+	bridgeID := strings.ToUpper(getBridgeID())
+
+	instance := fmt.Sprintf("Philips Hue - %s", tailHex(bridgeID, 6))
+	service := "_hue._tcp"
+	domain := "local."
+	txt := []string{
+		"bridgeid=" + bridgeID,
+		"modelid=BSB002",
+		"swversion=1.65.11",
+	}
+
+	// Register service; zeroconf keeps it alive until server.Shutdown()
+	server, err := zeroconf.Register(instance, service, domain, port, txt, nil)
+	if err != nil {
+		return err
+	}
+	// Keep running in background; rely on process exit to clean up
+	_ = server
+	log.Printf("mDNS: advertised %s.%s%s on port %d (bridgeid=%s)", instance, service, domain, port, bridgeID)
+	return nil
+}
+
+// getBridgeID tries to derive a stable bridge ID from the first MAC address
+// by inserting FFFE to form an 8-byte EUI-64-like identifier. Falls back to UUID.
+func getBridgeID() string {
+	ifs, err := net.Interfaces()
+	if err == nil {
+		for _, inf := range ifs {
+			hw := inf.HardwareAddr
+			if len(hw) == 6 { // MAC-48
+				// Insert FF FE after the first 3 bytes
+				eui := fmt.Sprintf("%02x%02x%02xFFFE%02x%02x%02x", hw[0], hw[1], hw[2], hw[3], hw[4], hw[5])
+				return eui
+			}
+		}
+	}
+	// Fallback to UUID-based
+	u := uuid.New().String()
+	// Strip dashes and take first 16 hex chars
+	u = strings.ReplaceAll(u, "-", "")
+	if len(u) >= 16 {
+		return u[:16]
+	}
+	return fmt.Sprintf("%016s", u)
+}
+
+// tailHex returns the last n characters of s, or s if shorter.
+func tailHex(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 func startHueAPIServer(port int, bridge *HueBridge) {
@@ -738,7 +804,7 @@ func handleSSDPRequest(clientAddr *net.UDPAddr, port int) {
 	response := fmt.Sprintf("HTTP/1.1 200 OK\r\n"+
 		"CACHE-CONTROL: max-age=100\r\n"+
 		"EXT:\r\n"+
-		"LOCATION: http://%s:%d/description.xml\r\n"+
+		"LOCATION: https://%s:%d/description.xml\r\n"+
 		"SERVER: Linux/3.14.0 UPnP/1.0 IpBridge/1.65.0\r\n"+
 		"ST: upnp:rootdevice\r\n"+
 		"USN: uuid:2f402f80-da50-11e1-9b23-001788102201::upnp:rootdevice\r\n\r\n",
