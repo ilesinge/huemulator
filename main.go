@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +20,9 @@ import (
 	"fyne.io/fyne/v2/container"
 	"github.com/google/uuid"
 )
+
+//go:embed server.crt server.key
+var embedFS embed.FS
 
 // HueLight represents a single fake Hue light
 type HueLight struct {
@@ -332,6 +337,9 @@ func main() {
 }
 
 func startHueAPIServer(port int, bridge *HueBridge) {
+	crt, _ := embedFS.ReadFile("server.crt")
+	key, _ := embedFS.ReadFile("server.key")
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Received API request: %s %s", r.Method, r.URL.Path)
@@ -343,8 +351,18 @@ func startHueAPIServer(port int, bridge *HueBridge) {
 	})
 	mux.HandleFunc("/description.xml", handleDescription)
 
+	cert, _ := tls.X509KeyPair(crt, key)
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}
+	srv := &http.Server{
+		Addr:      fmt.Sprintf(":%d", port),
+		Handler:   mux,
+		TLSConfig: cfg,
+	}
+
 	log.Printf("Hue API server starting on port %d (HTTPS)", port)
-	log.Fatal(http.ListenAndServeTLS(fmt.Sprintf(":%d", port), "server.crt", "server.key", mux))
+	log.Fatal(srv.ListenAndServeTLS("", ""))
 }
 
 func handleHueAPI(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
