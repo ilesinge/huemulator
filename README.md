@@ -159,7 +159,7 @@ curl -k -X PUT -H "Content-Type: application/json" \
 
 Built with:
 - Go 1.21+
-- Fyne v2.4.5 for GUI
+- Fyne for GUI
 - Standard Philips Hue API implementation
 - SSDP/UPnP for network discovery
 

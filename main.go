@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -30,9 +29,10 @@ type HueLight struct {
 	Manufacturer string      `json:"manufacturername"`
 	SWVersion    string      `json:"swversion"`
 	UniqueID     string      `json:"uniqueid"`
-	mutex        sync.RWMutex
 	window       fyne.Window
 	colorRect    *canvas.Rectangle
+	// refreshCh coalesces frequent state updates into ~60 FPS UI refreshes
+	refreshCh chan struct{}
 }
 
 // LightState represents the current state of a Hue light
@@ -111,7 +111,6 @@ type V2Response struct {
 // HueBridge represents the fake Hue Bridge
 type HueBridge struct {
 	lights map[string]*HueLight
-	mutex  sync.RWMutex
 	port   int
 }
 
@@ -145,6 +144,7 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 			Effect:     "none",
 			Reachable:  true,
 		},
+		refreshCh: make(chan struct{}, 1),
 	}
 
 	// Create GUI window for this light
@@ -171,20 +171,17 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 	light.window.SetContent(content)
 	light.updateGUI()
 
-	b.mutex.Lock()
+	// Start a per-light refresher to cap redraws and ensure UI updates run on main thread
+	go light.startRefresher()
+
 	b.lights[lightID] = light
-	b.mutex.Unlock()
 
 	return light
 }
 
 // updateGUI updates the visual representation of the light
 func (l *HueLight) updateGUI() {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
 	if l.State.On {
-		//l.onOffButton.SetText("ON")
 
 		// Convert HSV to RGB for display
 		var r, g, b uint8
@@ -200,17 +197,16 @@ func (l *HueLight) updateGUI() {
 
 		l.colorRect.FillColor = color.RGBA{R: r, G: g, B: b, A: 255}
 	} else {
-		//l.onOffButton.SetText("OFF")
 		l.colorRect.FillColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
 	}
 
-	l.colorRect.Refresh()
+	fyne.Do(func() {
+		l.colorRect.Refresh()
+	})
 }
 
 // updateLightState updates light state from API call
 func (l *HueLight) updateLightState(update StateUpdate) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
 
 	if update.On != nil {
 		l.State.On = *update.On
@@ -231,11 +227,31 @@ func (l *HueLight) updateLightState(update StateUpdate) {
 		l.State.ColorMode = "ct"
 	}
 
-	// Update GUI in the main thread
-	go func() {
-		time.Sleep(10 * time.Millisecond) // Small delay to ensure thread safety
-		l.updateGUI()
-	}()
+	// Signal the refresher to update the UI (non-blocking; coalesced to ~60 FPS)
+	select {
+	case l.refreshCh <- struct{}{}:
+	default:
+	}
+}
+
+// startRefresher coalesces rapid state changes and refreshes UI on the main thread at ~60 FPS
+func (l *HueLight) startRefresher() {
+	ticker := time.NewTicker(16 * time.Millisecond)
+	defer ticker.Stop()
+
+	dirty := false
+	for {
+		select {
+		case <-l.refreshCh:
+			dirty = true
+		case <-ticker.C:
+			if dirty {
+				dirty = false
+				// Perform the UI update; Refresh is called inside updateGUI
+				l.updateGUI()
+			}
+		}
+	}
 }
 
 // hsvToRGB converts HSV values to RGB
@@ -390,9 +406,6 @@ func handleHueV2API(w http.ResponseWriter, r *http.Request, bridge *HueBridge) {
 }
 
 func handleGetV2Lights(w http.ResponseWriter, _ *http.Request, bridge *HueBridge) {
-	bridge.mutex.RLock()
-	defer bridge.mutex.RUnlock()
-
 	var v2Lights []V2Light
 	for _, light := range bridge.lights {
 		v2Light := convertToV2Light(light)
@@ -416,7 +429,6 @@ func handleUpdateV2LightState(w http.ResponseWriter, r *http.Request, lightID st
 	}
 
 	// Find the light
-	bridge.mutex.RLock()
 	light, exists := bridge.lights[lightID]
 	if !exists {
 		for _, l := range bridge.lights {
@@ -427,7 +439,6 @@ func handleUpdateV2LightState(w http.ResponseWriter, r *http.Request, lightID st
 			}
 		}
 	}
-	bridge.mutex.RUnlock()
 
 	if !exists {
 		http.Error(w, "Light not found", http.StatusNotFound)
@@ -451,8 +462,6 @@ func handleUpdateV2LightState(w http.ResponseWriter, r *http.Request, lightID st
 }
 
 func convertToV2Light(light *HueLight) V2Light {
-	light.mutex.RLock()
-	defer light.mutex.RUnlock()
 
 	// Convert hue/sat to XY coordinates (simplified conversion)
 	x, y := hueToXY(light.State.Hue, light.State.Saturation)
@@ -583,9 +592,6 @@ func hueToXY(hue uint16, sat uint8) (float64, float64) {
 }
 
 func handleGetLights(w http.ResponseWriter, _ *http.Request, bridge *HueBridge) {
-	bridge.mutex.RLock()
-	defer bridge.mutex.RUnlock()
-
 	response := make(map[string]*HueLight)
 	for id, light := range bridge.lights {
 		response[id] = light
@@ -603,9 +609,7 @@ func handleUpdateLightState(w http.ResponseWriter, r *http.Request, lightID stri
 	}
 
 	// Find and update the light
-	bridge.mutex.RLock()
 	light, exists := bridge.lights[lightID]
-	bridge.mutex.RUnlock()
 
 	if !exists {
 		http.Error(w, "Light not found", http.StatusNotFound)
