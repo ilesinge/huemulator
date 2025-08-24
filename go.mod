@@ -1,4 +1,4 @@
-module fakehuebridge
+module huemulator
 
 go 1.21
 

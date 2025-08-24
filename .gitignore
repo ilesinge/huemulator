@@ -18,8 +18,8 @@
 go.work
 
 # Project specific binaries
-fakehuebridge
-fakehuebridge.exe
+huemulator
+huemulator.exe
 
 # IDE files
 .vscode/
