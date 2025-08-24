@@ -2,6 +2,8 @@
 
 A software-only implementation of a Philips Hue Bridge that creates fake lights compatible with diyhue and other Hue-compatible systems. Each light is displayed in its own GUI window.
 
+The initial goal of this software was to allow people who don't have Hue lights to play with [OSC2Hue](https://github.com/ilesinge/osc2hue).
+
 ## Features
 
 - **Multiple Light Support**: Create any number of fake lights (default: 3)
@@ -13,11 +15,17 @@ A software-only implementation of a Philips Hue Bridge that creates fake lights 
 
 ## Installation
 
-### Prerequisites
+### Download a pre-built binary
+
+- Download the right pre-built binary for your platform in the [releases section](https://github.com/ilesinge/huemulator/releases/latest).
+
+### Build locally
+
+Install the prerequisites:
 
 - Go 1.21
 
-You will need gioui dependencies in order to build it.
+You will need to install Gio UI dependencies depending on your platform:
 - [Linux dependencies](https://gioui.org/doc/install/linux)
 - [macOS dependencies](https://gioui.org/doc/install/macos)
 - No Windows dependencies
@@ -145,8 +153,8 @@ curl -k -X PUT -H "Content-Type: application/json" \
 
 Built with:
 - Go 1.21+
-- gioui for GUI
-- zeroconf for mDNS
+- [Gio UI](https://gioui.org/) for the GUI
+- [grandcat/zeroconf](https://github.com/grandcat/zeroconf) for mDNS registering
 
 ## License
 
