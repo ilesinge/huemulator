@@ -15,8 +15,9 @@ A software-only implementation of a Philips Hue Bridge that creates fake lights 
 
 ### Prerequisites
 
-You will need gioui dependencies in order to build it.
+- Go 1.21
 
+You will need gioui dependencies in order to build it.
 - [Linux dependencies](https://gioui.org/doc/install/linux)
 - [macOS dependencies](https://gioui.org/doc/install/macos)
 - No Windows dependencies
@@ -24,7 +25,7 @@ You will need gioui dependencies in order to build it.
 ### Building
 
 ```bash
-git clone <this-repository>
+git clone https://github.com/ilesinge/huemulator.git
 cd huemulator
 go mod tidy
 go build -o huemulator
