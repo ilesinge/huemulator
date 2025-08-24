@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/tls"
-	"embed"
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,20 +12,23 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
+	"sync"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
+	"gioui.org/app"
+	"gioui.org/op"
+	"gioui.org/op/paint"
 	"github.com/google/uuid"
 	"github.com/grandcat/zeroconf"
 )
 
-//go:embed server.crt server.key
-var embedFS embed.FS
+// Embed TLS certificate and key for HTTPS server
+//
+//go:embed server.crt
+var serverCrt []byte
 
-// HueLight represents a single fake Hue light
+//go:embed server.key
+var serverKey []byte
+
 type HueLight struct {
 	ID           string      `json:"id"`
 	Name         string      `json:"name"`
@@ -35,10 +38,11 @@ type HueLight struct {
 	Manufacturer string      `json:"manufacturername"`
 	SWVersion    string      `json:"swversion"`
 	UniqueID     string      `json:"uniqueid"`
-	window       fyne.Window
-	colorRect    *canvas.Rectangle
-	// refreshCh coalesces frequent state updates into ~60 FPS UI refreshes
-	refreshCh chan struct{}
+
+	// win holds the associated window to allow direct invalidation on state changes
+	win *app.Window
+	// mu protects State for concurrent access from HTTP handlers and UI loop
+	mu sync.RWMutex
 }
 
 // LightState represents the current state of a Hue light
@@ -129,7 +133,7 @@ func NewHueBridge(port int) *HueBridge {
 }
 
 // CreateLight creates a new light and its GUI window
-func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
+func (b *HueBridge) CreateLight(id int) *HueLight {
 	lightID := strconv.Itoa(id)
 	light := &HueLight{
 		ID:           uuid.New().String(), // Generate a unique ID for the light
@@ -150,70 +154,67 @@ func (b *HueBridge) CreateLight(id int, fyneApp fyne.App) *HueLight {
 			Effect:     "none",
 			Reachable:  true,
 		},
-		refreshCh: make(chan struct{}, 1),
 	}
 
-	// Create GUI window for this light
-	light.window = fyneApp.NewWindow(fmt.Sprintf("Hue Light %d", id))
-	light.window.Resize(fyne.NewSize(300, 400))
-
-	// Position windows in a grid (note: Move() is not available in all Fyne versions)
-	// x := float32((id-1) % 3 * 320)
-	// y := float32((id-1) / 3 * 420)
-
-	// Create color rectangle that fills most of the window
-	light.colorRect = canvas.NewRectangle(color.RGBA{R: 50, G: 50, B: 50, A: 255})
-	light.colorRect.Resize(fyne.NewSize(280, 300))
-
-	// Main container
-	content := container.NewBorder(
-		nil,
-		nil, //controls,
-		nil,
-		nil,
-		light.colorRect,
-	)
-
-	light.window.SetContent(content)
-	light.updateGUI()
-
-	// Start a per-light refresher to cap redraws and ensure UI updates run on main thread
-	go light.startRefresher()
+	// Start Gio window for this light
+	go runLightWindow(light, id)
 
 	b.lights[lightID] = light
 
 	return light
 }
 
-// updateGUI updates the visual representation of the light
-func (l *HueLight) updateGUI() {
-	if l.State.On {
+// runLightWindow creates a gioui window and renders the light state as a filled background
+func runLightWindow(l *HueLight, id int) {
+	// Create a window; set title to "Light #<id>". Uncomment Decorated(false) to remove OS chrome.
+	w := new(app.Window)
+	w.Option(
+		app.Title(fmt.Sprintf("Light #%d", id)),
+		// app.Decorated(false), // remove window decorations (optional)
+	)
+	// attach window to light for direct invalidation
+	l.win = w
 
-		// Convert HSV to RGB for display
-		var r, g, b uint8
-		if l.State.ColorMode == "hs" {
-			r, g, b = hsvToRGB(l.State.Hue, l.State.Saturation, l.State.Brightness)
-		} else {
-			// Color temperature mode - use warm white
-			intensity := float64(l.State.Brightness) / 254.0
-			r = uint8(255 * intensity)
-			g = uint8(220 * intensity)
-			b = uint8(180 * intensity)
+	for {
+		e := w.Event()
+		switch ev := e.(type) {
+		case app.DestroyEvent:
+			return
+		case app.FrameEvent:
+			var ops op.Ops
+			gtx := app.NewContext(&ops, ev)
+
+			// Snapshot the state under read lock to avoid races
+			s := l.snapshotState()
+
+			// log.Default().Println("Rendering light:", s.Reachable)
+
+			// Compute current color from state
+			var col color.NRGBA
+			if s.On {
+				var r, g, b uint8
+				if s.ColorMode == "hs" {
+					r, g, b = hsvToRGB(s.Hue, s.Saturation, s.Brightness)
+				} else {
+					intensity := float64(s.Brightness) / 254.0
+					r = uint8(255 * intensity)
+					g = uint8(220 * intensity)
+					b = uint8(180 * intensity)
+				}
+				col = color.NRGBA{R: r, G: g, B: b, A: 255}
+			} else {
+				col = color.NRGBA{R: 30, G: 30, B: 30, A: 255}
+			}
+
+			paint.Fill(gtx.Ops, col)
+			ev.Frame(gtx.Ops)
 		}
-
-		l.colorRect.FillColor = color.RGBA{R: r, G: g, B: b, A: 255}
-	} else {
-		l.colorRect.FillColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
 	}
-
-	fyne.Do(func() {
-		l.colorRect.Refresh()
-	})
 }
 
 // updateLightState updates light state from API call
 func (l *HueLight) updateLightState(update StateUpdate) {
-
+	l.mu.Lock()
 	if update.On != nil {
 		l.State.On = *update.On
 	}
@@ -232,32 +233,20 @@ func (l *HueLight) updateLightState(update StateUpdate) {
 		l.State.ColorTemp = *update.ColorTemp
 		l.State.ColorMode = "ct"
 	}
+	l.mu.Unlock()
 
-	// Signal the refresher to update the UI (non-blocking; coalesced to ~60 FPS)
-	select {
-	case l.refreshCh <- struct{}{}:
-	default:
+	// Trigger redraw: prefer direct window invalidation if available
+	if l.win != nil {
+		l.win.Invalidate()
+		return
 	}
 }
 
-// startRefresher coalesces rapid state changes and refreshes UI on the main thread at ~60 FPS
-func (l *HueLight) startRefresher() {
-	ticker := time.NewTicker(16 * time.Millisecond)
-	defer ticker.Stop()
-
-	dirty := false
-	for {
-		select {
-		case <-l.refreshCh:
-			dirty = true
-		case <-ticker.C:
-			if dirty {
-				dirty = false
-				// Perform the UI update; Refresh is called inside updateGUI
-				l.updateGUI()
-			}
-		}
-	}
+// snapshotState returns a copy of the current state under read lock
+func (l *HueLight) snapshotState() LightState {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return *l.State
 }
 
 // hsvToRGB converts HSV values to RGB
@@ -310,21 +299,12 @@ func main() {
 	fmt.Printf("Starting fake Hue Bridge with %d lights\n", *numLights)
 	fmt.Printf("Hue API server on port %d\n", *port)
 
-	// Create Fyne app
-	fyneApp := app.New()
-	// Set app metadata (if supported by Fyne version)
-	// fyneApp.SetMetadata(&fyne.AppMetadata{
-	//	ID:   "com.github.fakehuebridge",
-	//	Name: "Fake Hue Bridge",
-	// })
-
 	// Create bridge
 	bridge := NewHueBridge(*port)
 
 	// Create lights with GUI windows
 	for i := 1; i <= *numLights; i++ {
-		light := bridge.CreateLight(i, fyneApp)
-		light.window.Show()
+		bridge.CreateLight(i)
 	}
 
 	// Start HTTP server for Hue API
@@ -340,8 +320,8 @@ func main() {
 		}
 	}()
 
-	// Run the Fyne app
-	fyneApp.Run()
+	// Run the Gio app main loop (blocks)
+	app.Main()
 }
 
 // startMDNSService advertises the bridge using mDNS/DNS-SD on _hue._tcp.local
@@ -403,8 +383,6 @@ func tailHex(s string, n int) string {
 }
 
 func startHueAPIServer(port int, bridge *HueBridge) {
-	crt, _ := embedFS.ReadFile("server.crt")
-	key, _ := embedFS.ReadFile("server.key")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -417,7 +395,7 @@ func startHueAPIServer(port int, bridge *HueBridge) {
 	})
 	mux.HandleFunc("/description.xml", handleDescription)
 
-	cert, _ := tls.X509KeyPair(crt, key)
+	cert, _ := tls.X509KeyPair(serverCrt, serverKey)
 	cfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	}
