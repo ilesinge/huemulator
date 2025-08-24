@@ -27,11 +27,23 @@ jobs:
     - name: Build
       run: go build -v ./...
 
-    - name: Upload binaries to release
+    - name: Build for Windows
+      run: GOOS=windows GOARCH=amd64 go build -v ./...
+
+    - name: Upload Linux binary to release
       uses: svenstaro/upload-release-action@v2
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: huemulator
         asset_name: huemulator-linux
+        tag: ${{ github.ref }}
+        overwrite: true
+
+    - name: Upload Windows binary to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: huemulator.exe
+        asset_name: huemulator.exe
         tag: ${{ github.ref }}
         overwrite: true
