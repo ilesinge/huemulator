@@ -24,11 +24,19 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y gcc pkg-config libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev
 
+    - name: Set up MacOS Cross Compiler
+      uses: Timmmm/setup-osxcross@v2
+      with:
+        osx-version: "15.4"
+
     - name: Build
       run: go build -v ./...
 
     - name: Build for Windows
       run: GOOS=windows GOARCH=amd64 go build -v ./...
+
+    - name: Build for MacOS
+      run: GOOS=darwin GOARCH=arm64 go build -o huemulator-macos -v ./...
 
     - name: Upload Linux binary to release
       uses: svenstaro/upload-release-action@v2
@@ -45,5 +53,14 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: huemulator.exe
         asset_name: huemulator.exe
+        tag: ${{ github.ref }}
+        overwrite: true
+    
+    - name: Upload macOS binary to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: huemulator-macos
+        asset_name: huemulator-macos
         tag: ${{ github.ref }}
         overwrite: true
